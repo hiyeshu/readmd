@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Readmd - GitHub Markdown 中文翻译器",
+  "version": "0.1.0",
+  "description": "GitHub Markdown 双语阅读器 — 右侧展开中文翻译面板",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://raw.githubusercontent.com/*",
+    "https://translate.googleapis.com/*",
+    "https://api.mymemory.translated.net/*",
+    "https://translate.volcengineapi.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [{
+    "matches": ["https://github.com/*"],
+    "js": ["lib/marked.min.js", "lib/highlight.min.js", "src/markdown.js", "src/provider.js", "src/cache.js", "src/translator.js", "src/panel.js", "src/content.js"],
+    "css": ["lib/readmd-markdown.css"],
+    "run_at": "document_idle"
+  }],
+  "commands": {
+    "toggle-translate": {
+      "suggested_key": { "default": "Alt+T", "mac": "Alt+T" },
+      "description": "翻译为中文"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": { "128": "icons/icon.png" }
+  },
+  "icons": {
+    "128": "icons/icon.png"
+  }
+}
