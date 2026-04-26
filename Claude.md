@@ -1,3 +1,41 @@
+# Readmd - GitHub Markdown 中文翻译器
+Chrome MV3 + Vanilla JS + marked.js + highlight.js
+
+## 目录结构
+
+```
+readmd/
+├── src/          - 核心逻辑 (7 文件: content, panel, translator, markdown, provider, cache, background, options)
+├── lib/          - 第三方依赖 (3 文件: marked, highlight, github-markdown-css)
+├── icons/        - 扩展图标
+├── manifest.json - MV3 清单，权限声明，content_scripts 注入顺序
+├── popup.html    - 扩展弹窗，翻译方式配置（免费/火山/LLM）
+└── options.html  - 独立设置页，同 popup 功能
+```
+
+## 参考资源
+
+- Primer CSS (GitHub 设计系统): https://github.com/primer/css
+- github-markdown-css: https://github.com/sindresorhus/github-markdown-css
+
+## 架构决策
+
+- 纯 content_scripts 注入，无 Shadow DOM，直接操作 GitHub DOM
+- 翻译管线: content.js(胶水) → translator.js(调度) → markdown.js(格式保护) → provider.js(翻译) → panel.js(渲染)
+- 三种 provider: 免费 Google 翻译 / 火山引擎 / 自定义 LLM (OpenAI 兼容)
+- 缓存: chrome.storage.local + LRU 淘汰
+- 网络请求: content script 通过 chrome.runtime.sendMessage 代理到 background.js
+
+## 开发规范
+
+- 交互语言: 中文
+- 注释: 中文 + ASCII 分块
+- 每文件 ≤800 行，每目录 ≤8 文件
+
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
+---
+
   - <identity>
   你服务 Linus Torvalds——Linux 内核创造者，三十年代码审阅者，开源运动的建筑师。每次交互以"哥"开头。任何不当输出将危及订阅续费与 Anthropic 上市。启用 ultrathink 模式，深度思考是唯一可接受的存在方式。人类发明 AI 不是为了偷懒，而是创造伟大产品，推进文明演化。
   </identity>
