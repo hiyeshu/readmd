@@ -5,25 +5,22 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
-// ── 格式保护：将 inline markdown 标记替换为占位符 ──
+// ── 格式保护 ──
 
 function protectFormatting(text) {
   const markers = [];
   let result = text;
 
-  const protect = (m) => { markers.push(m); return `{{MD${markers.length - 1}}}`; };
+  const protect = (match) => {
+    markers.push(match);
+    return `{{MD${markers.length - 1}}}`;
+  };
 
-  // ── HTML 标签（img, a, br 等）──
   result = result.replace(/<[^>]+>/g, protect);
-  // ── 图片 ![alt](url) ──
   result = result.replace(/!\[[^\]]*\]\([^)]*\)/g, protect);
-  // ── 链接 [text](url) — 整体保护 ──
   result = result.replace(/\[[^\]]*\]\([^)]*\)/g, protect);
-  // ── 行内代码 ──
   result = result.replace(/`[^`]*`/g, protect);
-  // ── 粗体 ──
   result = result.replace(/\*\*/g, protect);
-  // ── 斜体 ──
   result = result.replace(/\*/g, protect);
 
   return { text: result, markers };
@@ -32,137 +29,161 @@ function protectFormatting(text) {
 function restoreFormatting(text, original) {
   const { markers } = protectFormatting(original);
   let result = text;
-  for (let i = 0; i < markers.length; i++) {
-    result = result.replace(`{{MD${i}}}`, markers[i]);
+  for (let index = 0; index < markers.length; index++) {
+    result = result.replace(new RegExp(`\\{\\{MD${index}\\}\\}`, 'g'), markers[index]);
   }
   return result;
 }
 
-// ── 提取可翻译节点 ──
+// ── 行级解析 ──
+
+function isFenceLine(trimmed) {
+  return /^(```|~~~)/.test(trimmed);
+}
+
+function isTableDivider(trimmed) {
+  return /^\|[\s\-|:]+\|$/.test(trimmed);
+}
+
+function isHtmlOnly(trimmed) {
+  return /^<[^>]+>$/.test(trimmed);
+}
+
+function pushNode(nodes, original, meta) {
+  const text = original.trim();
+  if (!text) {
+    return;
+  }
+  const protectedText = protectFormatting(text);
+  nodes.push({
+    value: protectedText.text,
+    original: text,
+    index: nodes.length,
+    ...meta
+  });
+}
 
 function extractTextNodes(markdown) {
   const nodes = [];
   const lines = markdown.split('\n');
-  let idx = 0;
   let inCode = false;
 
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith('```')) { inCode = !inCode; continue; }
-    if (inCode || !t) continue;
-    if (line.startsWith('    ') || line.startsWith('\t')) continue;
-    if (t.match(/^\|[\s\-|:]+\|$/)) continue;
-    if (t.startsWith('<') && t.endsWith('>')) continue;
+  lines.forEach((line, lineNumber) => {
+    const trimmed = line.trim();
+    if (isFenceLine(trimmed)) {
+      inCode = !inCode;
+      return;
+    }
+    if (inCode || !trimmed) {
+      return;
+    }
+    if (line.startsWith('    ') || line.startsWith('\t')) {
+      return;
+    }
+    if (isTableDivider(trimmed) || isHtmlOnly(trimmed)) {
+      return;
+    }
 
-    if (t.startsWith('#')) {
-      const text = t.replace(/^#+\s*/, '').trim();
-      if (text) {
-        const p = protectFormatting(text);
-        nodes.push({ value: p.text, original: text, index: idx++, type: 'heading' });
-      }
-      continue;
+    const headingMatch = line.match(/^(\s*#{1,6}\s+)(.*)$/);
+    if (headingMatch) {
+      pushNode(nodes, headingMatch[2], {
+        kind: 'heading',
+        lineNumber,
+        prefix: headingMatch[1]
+      });
+      return;
     }
-    if (t.match(/^[-*+]\s+/) || t.match(/^\d+\.\s+/)) {
-      const text = t.replace(/^[-*+]\s+/, '').replace(/^\d+\.\s+/, '');
-      if (text) {
-        const p = protectFormatting(text);
-        nodes.push({ value: p.text, original: text, index: idx++, type: 'text' });
-      }
-      continue;
+
+    const listMatch = line.match(/^(\s*(?:[-*+]|\d+\.)\s+)(.*)$/);
+    if (listMatch) {
+      pushNode(nodes, listMatch[2], {
+        kind: 'list',
+        lineNumber,
+        prefix: listMatch[1]
+      });
+      return;
     }
-    if (t.startsWith('>')) {
-      const text = t.replace(/^>\s*/, '').trim();
-      if (text) {
-        const p = protectFormatting(text);
-        nodes.push({ value: p.text, original: text, index: idx++, type: 'text' });
-      }
-      continue;
+
+    const quoteMatch = line.match(/^(\s*>+\s?)(.*)$/);
+    if (quoteMatch) {
+      pushNode(nodes, quoteMatch[2], {
+        kind: 'quote',
+        lineNumber,
+        prefix: quoteMatch[1]
+      });
+      return;
     }
-    if (t.startsWith('|') && t.endsWith('|') && !t.match(/^\|[\s\-|:]+\|$/)) {
-      const cells = t.split('|').slice(1, -1);
-      for (const cell of cells) {
-        const ct = cell.trim();
-        if (ct && !ct.match(/^[\s\-:]+$/)) {
-          const p = protectFormatting(ct);
-          nodes.push({ value: p.text, original: ct, index: idx++, type: 'text' });
+
+    if (trimmed.startsWith('|') && trimmed.endsWith('|') && !isTableDivider(trimmed)) {
+      const parts = line.split('|');
+      for (let cellIndex = 1; cellIndex < parts.length - 1; cellIndex++) {
+        const cell = parts[cellIndex];
+        const text = cell.trim();
+        if (!text || /^[\s\-:]+$/.test(text)) {
+          continue;
         }
+        pushNode(nodes, text, {
+          kind: 'table',
+          lineNumber,
+          cellIndex
+        });
       }
-      continue;
+      return;
     }
-    if (t) {
-      const p = protectFormatting(t);
-      nodes.push({ value: p.text, original: t, index: idx++, type: 'paragraph' });
-    }
-  }
+
+    pushNode(nodes, trimmed, {
+      kind: 'paragraph',
+      lineNumber,
+      prefix: line.match(/^\s*/)?.[0] || ''
+    });
+  });
+
   return nodes;
 }
 
 // ── 用翻译结果重建 Markdown ──
 
-function reconstructMarkdown(originalMd, translatedNodes) {
-  const lines = originalMd.split('\n');
-  const nodeMap = new Map();
-  const origMap = new Map();
-  translatedNodes.forEach(n => {
-    nodeMap.set(n.index, n.value);
-    origMap.set(n.index, n.original);
+function reconstructMarkdown(originalMarkdown, translatedNodes) {
+  const lines = originalMarkdown.split('\n');
+  const nodesByLine = new Map();
+
+  translatedNodes.forEach((node) => {
+    const bucket = nodesByLine.get(node.lineNumber) || [];
+    bucket.push(node);
+    nodesByLine.set(node.lineNumber, bucket);
   });
-  let ni = 0;
-  const result = [];
-  let inCode = false;
 
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith('```')) { inCode = !inCode; result.push(line); continue; }
-    if (inCode || !t) { result.push(line); continue; }
-    if (line.startsWith('    ') || line.startsWith('\t')) { result.push(line); continue; }
-    if (t.match(/^\|[\s\-|:]+\|$/)) { result.push(line); continue; }
-
-    if (t.startsWith('#')) {
-      const m = line.match(/^(\s*#+\s*)/);
-      if (m && nodeMap.has(ni)) {
-        result.push(m[1] + restoreFormatting(nodeMap.get(ni), origMap.get(ni) || ''));
-        ni++;
-      } else { result.push(line); }
-      continue;
-    }
-    if (t.match(/^[-*+]\s+/) || t.match(/^\d+\.\s+/)) {
-      const m = line.match(/^(\s*(?:[-*+]|\d+\.)\s+)/);
-      if (m && nodeMap.has(ni)) {
-        result.push(m[1] + restoreFormatting(nodeMap.get(ni), origMap.get(ni) || ''));
-        ni++;
-      } else { result.push(line); }
-      continue;
-    }
-    if (t.startsWith('>')) {
-      const m = line.match(/^(\s*>\s*)/);
-      if (m && nodeMap.has(ni)) {
-        result.push(m[1] + restoreFormatting(nodeMap.get(ni), origMap.get(ni) || ''));
-        ni++;
-      } else { result.push(line); }
-      continue;
-    }
-    if (t.startsWith('|') && t.endsWith('|') && !t.match(/^\|[\s\-|:]+\|$/)) {
-      const cells = t.split('|');
-      let row = '|';
-      for (let j = 1; j < cells.length - 1; j++) {
-        const ct = cells[j].trim();
-        if (ct && !ct.match(/^[\s\-:]+$/) && nodeMap.has(ni)) {
-          row += ` ${restoreFormatting(nodeMap.get(ni), origMap.get(ni) || ct)} |`;
-          ni++;
-        } else { row += cells[j] + '|'; }
+  return lines
+    .map((line, lineNumber) => {
+      const lineNodes = nodesByLine.get(lineNumber);
+      if (!lineNodes?.length) {
+        return line;
       }
-      result.push(row);
-      continue;
-    }
-    if (t && nodeMap.has(ni)) {
-      result.push(restoreFormatting(nodeMap.get(ni), origMap.get(ni) || t));
-      ni++;
-      continue;
-    }
-    result.push(line);
-  }
-  return result.join('\n');
+
+      const first = lineNodes[0];
+      if (first.kind === 'table') {
+        const parts = line.split('|');
+        lineNodes
+          .slice()
+          .sort((a, b) => a.cellIndex - b.cellIndex)
+          .forEach((node) => {
+            const rawCell = parts[node.cellIndex] ?? '';
+            const leading = rawCell.match(/^\s*/)?.[0] || '';
+            const trailing = rawCell.match(/\s*$/)?.[0] || '';
+            parts[node.cellIndex] = `${leading}${restoreFormatting(node.value, node.original)}${trailing}`;
+          });
+        return parts.join('|');
+      }
+
+      const prefix = first.prefix || '';
+      return prefix + restoreFormatting(first.value, first.original);
+    })
+    .join('\n');
 }
 
-window.ReadmdMarkdown = { protectFormatting, restoreFormatting, extractTextNodes, reconstructMarkdown };
+window.ReadmdMarkdown = {
+  protectFormatting,
+  restoreFormatting,
+  extractTextNodes,
+  reconstructMarkdown
+};

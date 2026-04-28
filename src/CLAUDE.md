@@ -3,24 +3,24 @@
 
 ## 成员清单
 
-- content.js: 扩展入口，胶水层。注入"中"按钮、监听 Ctrl/Command+Shift+Y、协调 panel 和 translator、SPA 路由检测
-- panel.js: 翻译面板 UI。创建/销毁/更新面板，预览/源码双模式，完成后请求 GitHub Markdown API 渲染，拖拽调宽，暗色适配，骨架屏
-- translator.js: 翻译调度。fetch raw MD、调用 markdown.js 分离格式、分批翻译、流式回调
-- markdown.js: 格式保护层。protectFormatting 将链接/图片/代码替换为占位符，restoreFormatting 还原
-- provider.js: 翻译 provider。FreeTranslateProvider (Google) + LlmTranslateProvider (OpenAI 兼容)
-- cache.js: 缓存层。chrome.storage.local + LRU 淘汰，双层缓存 (raw MD + 翻译结果)
 - background.js: MV3 Service Worker。消息路由、LLM fetch 代理、GitHub Markdown 渲染代理、火山翻译签名代理、快捷键命令转发
+- cache.js: 缓存与键模型。chrome.storage.local + LRU，提供文本缓存键、文件缓存键、namespace 构造
+- content.js: 单一页面状态源。解析 GitHub Markdown 页、注入"中"按钮、挂载面板、取消/重试翻译、同步 UI 偏好
+- markdown.js: 格式保护与重建层。抽取可翻译节点，保留标题/列表/表格/行内格式并按行元数据重建
 - options.js: 设置页逻辑。读写 chrome.storage.local，provider 切换显隐
+- panel.js: 状态驱动渲染器。`create/bindActions/render/destroy`，支持源码高亮、重试、前往设置、Esc 关闭、拖拽宽度
+- provider.js: 翻译 provider 与错误模型中心。Free / Volcengine / LLM 三类实现，统一错误分类
+- translator.js: 可取消翻译调度。优先 fetch Raw，命中文本/文件缓存，分批翻译并增量回调 UI
 
 ## 依赖关系
 
 ```
-content.js → panel.js (创建面板)
-content.js → translator.js (启动翻译)
-panel.js → background.js (完成态 GitHub Markdown API 渲染)
-translator.js → markdown.js (格式保护)
-translator.js → provider.js (翻译执行)
-translator.js → cache.js (缓存读写)
+content.js → panel.js (状态驱动渲染)
+content.js → translator.js (启动/取消翻译任务)
+content.js → provider.js (错误分类与 Options 跳转)
+translator.js → markdown.js (抽取与重建)
+translator.js → provider.js (配置、provider、错误标准化)
+translator.js → cache.js (文本/文件缓存)
 provider.js → background.js (网络代理，via chrome.runtime.sendMessage)
 background.js → content.js (快捷键命令，via chrome.tabs.sendMessage)
 ```

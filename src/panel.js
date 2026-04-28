@@ -1,180 +1,264 @@
 /**
- * [INPUT]: marked.js (window.marked), highlight.js (window.hljs), GitHub Markdown API via background.js
- * [OUTPUT]: ReadmdPanel — create/destroy/update，GitHub 原生风格翻译面板
+ * [INPUT]: marked.js (window.marked), highlight.js (window.hljs), content.js 传入的状态与动作
+ * [OUTPUT]: ReadmdPanel — create/bindActions/render/destroy，状态驱动的翻译面板
  * [POS]: 翻译管线的渲染层，被 content.js 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
-// ── 面板样式 ──
-
 const PANEL_CSS = `
 #readmd-panel {
-  flex: 0 0 var(--readmd-width, 50vw);
-  display: flex; flex-direction: column;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  background: var(--bgColor-default, #fff);
-  overflow: hidden;
-  margin-left: 16px;
-  min-width: 280px;
+  --readmd-width: 420px;
+  flex: 0 0 var(--readmd-width);
+  min-width: 320px;
   max-width: 70vw;
+  margin-left: 16px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--readmd-surface, #ffffff);
+  color: var(--readmd-fg, #171717);
+  box-shadow: rgba(0, 0, 0, 0.08) 0 0 0 1px, rgba(0, 0, 0, 0.04) -4px 0 12px -8px;
 }
 #readmd-panel[data-theme="dark"] {
-  background: var(--bgColor-default, #0d1117);
-  border-color: var(--borderColor-default, #3d444d);
-  color: var(--fgColor-default, #f0f6fc);
+  --readmd-surface: #0d1117;
+  --readmd-surface-muted: #151b23;
+  --readmd-surface-soft: #161b22;
+  --readmd-border: #3d444d;
+  --readmd-fg: #f0f6fc;
+  --readmd-muted: #9198a1;
+  --readmd-code: #c9d1d9;
+  --readmd-code-bg: #11161d;
+}
+#readmd-panel[data-theme="light"] {
+  --readmd-surface: #ffffff;
+  --readmd-surface-muted: #f6f8fa;
+  --readmd-surface-soft: #f6f8fa;
+  --readmd-border: #d0d7de;
+  --readmd-fg: #171717;
+  --readmd-muted: #656d76;
+  --readmd-code: #24292e;
+  --readmd-code-bg: #f6f8fa;
 }
 
-/* ── 拖拽手柄 ── */
-
 .readmd-resize {
-  position: absolute; left: -4px; top: 0; bottom: 0;
-  width: 8px; cursor: col-resize; z-index: 10;
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 3;
 }
 .readmd-resize:hover,
 .readmd-resize.active {
-  background: var(--fgColor-accent, #0969da);
-  opacity: 0.3; border-radius: 4px;
+  background: rgba(9, 105, 218, 0.18);
 }
-
-/* ── 工具栏 ── */
 
 .readmd-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px;
-  background: var(--bgColor-muted, #f6f8fa);
-  border-bottom: 1px solid var(--borderColor-default, #d1d9e0);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--readmd-border);
+  background: var(--readmd-surface-muted);
   flex-shrink: 0;
 }
-.readmd-toolbar-left { display: flex; align-items: center; gap: 8px; }
-.readmd-toolbar-right { display: flex; align-items: center; gap: 4px; }
-
-/* ── SegmentedControl ── */
+.readmd-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.readmd-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .readmd-seg {
-  display: inline-flex; list-style: none;
-  background: var(--bgColor-neutral-muted, #e6eaef);
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  padding: 2px; margin: 0;
+  display: inline-flex;
+  padding: 2px;
+  margin: 0;
+  list-style: none;
+  border-radius: 7px;
+  background: rgba(175, 184, 193, 0.16);
+  box-shadow: inset 0 0 0 1px var(--readmd-border);
+}
+.readmd-seg-btn,
+.readmd-close,
+.readmd-action {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
 }
 .readmd-seg-btn {
-  display: flex; align-items: center; justify-content: center;
-  border: none; background: none; cursor: pointer;
-  font-size: 14px; font-weight: 400;
-  color: var(--fgColor-default, #1f2328);
-  padding: 2px 12px; border-radius: 5px; height: 24px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--readmd-muted);
 }
 .readmd-seg-btn[aria-current="true"] {
-  background: var(--bgColor-default, #fff);
-  font-weight: 600;
-  box-shadow: 0 0 0 1px var(--borderColor-default, #d1d9e0);
+  color: var(--readmd-fg);
+  background: var(--readmd-surface);
+  box-shadow: rgba(0, 0, 0, 0.08) 0 0 0 1px;
 }
-.readmd-seg-btn:hover:not([aria-current="true"]) {
-  background: rgba(175,184,193,0.2);
-}
-
-/* ── 文件信息 ── */
 
 .readmd-fileinfo {
-  font-size: 12px; color: var(--fgColor-muted, #656d76);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--readmd-muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
-
-/* ── 关闭按钮 ── */
 
 .readmd-close {
-  display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
-  background: var(--bgColor-default, #fff);
-  cursor: pointer; color: var(--fgColor-muted, #656d76);
-  flex-shrink: 0;
+  color: var(--readmd-muted);
 }
-.readmd-close:hover { background: rgba(175,184,193,0.2); }
-
-/* ── 暗色模式 ── */
-
-[data-theme="dark"] .readmd-toolbar {
-  background: var(--bgColor-muted, #151b23);
-  border-color: var(--borderColor-default, #3d444d);
-}
-[data-theme="dark"] .readmd-seg {
-  background: var(--bgColor-neutral-muted, #656c7633);
-  border-color: var(--borderColor-default, #3d444d);
-}
-[data-theme="dark"] .readmd-seg-btn {
-  color: var(--fgColor-default, #f0f6fc);
-}
-[data-theme="dark"] .readmd-seg-btn[aria-current="true"] {
-  background: var(--bgColor-default, #0d1117);
-  box-shadow: 0 0 0 1px var(--borderColor-default, #3d444d);
-}
-[data-theme="dark"] .readmd-close {
-  border-color: var(--borderColor-default, #3d444d);
-  background: var(--bgColor-default, #0d1117);
-  color: var(--fgColor-muted, #9198a1);
-}
-[data-theme="dark"] .readmd-fileinfo {
-  color: var(--fgColor-muted, #9198a1);
+.readmd-close:hover,
+.readmd-seg-btn:hover:not([aria-current="true"]),
+.readmd-action:hover {
+  background: rgba(175, 184, 193, 0.16);
 }
 
-/* ── 内容区 ── */
+.readmd-content {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
 
 .readmd-body {
-  flex: 1; padding: 16px;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+.readmd-body.readmd-source {
+  padding: 0;
 }
 
-.readmd-body.readmd-source { padding: 0; }
-.readmd-lines {
-  width: 100%; border-collapse: collapse;
-  font-size: 12px; line-height: 20px;
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+.readmd-footer {
+  min-height: 18px;
+  padding: 8px 16px 12px;
+  font-size: 12px;
+  color: var(--readmd-muted);
+  border-top: 1px solid transparent;
 }
-.readmd-ln {
-  width: 1%; min-width: 40px; padding: 0 8px;
-  text-align: right; vertical-align: top;
-  color: var(--fgColor-muted, #656d76);
-  user-select: none; white-space: nowrap;
-}
-.readmd-lc {
-  padding: 0 16px 0 8px;
-  white-space: pre-wrap; word-break: break-word;
+.readmd-footer[data-visible="true"] {
+  border-top-color: var(--readmd-border);
 }
 
-/* ── 骨架屏 ── */
-
-.readmd-skeleton { display: flex; flex-direction: column; gap: 12px; }
+.readmd-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .readmd-skeleton-line {
-  height: 14px; border-radius: 4px;
-  background: var(--bgColor-neutral-muted, #eee);
+  height: 14px;
+  border-radius: 6px;
+  background: rgba(175, 184, 193, 0.2);
   animation: readmd-pulse 0.8s ease-in-out infinite alternate;
 }
-.readmd-skeleton-line:nth-child(1) { width: 90%; }
-.readmd-skeleton-line:nth-child(2) { width: 65%; }
-.readmd-skeleton-line:nth-child(3) { width: 80%; }
-@keyframes readmd-pulse { from { opacity: 1; } to { opacity: 0.4; } }
-
-/* ── 状态 ── */
-
-.readmd-status {
-  color: var(--fgColor-muted, #656d76); font-size: 14px;
-  text-align: center; padding: 32px 16px;
+.readmd-skeleton-line:nth-child(1) { width: 92%; }
+.readmd-skeleton-line:nth-child(2) { width: 74%; }
+.readmd-skeleton-line:nth-child(3) { width: 88%; }
+@keyframes readmd-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.4; }
 }
-.readmd-status button {
-  color: var(--fgColor-accent, #0969da);
-  background: none; border: none; cursor: pointer;
-  text-decoration: underline; font-size: 14px;
+
+.readmd-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  text-align: center;
 }
-.readmd-translating { color: var(--fgColor-muted, #656d76); font-size: 13px; padding: 8px 0; }
+.readmd-state-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--readmd-fg);
+}
+.readmd-state-text {
+  font-size: 14px;
+  color: var(--readmd-muted);
+  line-height: 1.6;
+  max-width: 320px;
+}
+.readmd-state-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.readmd-action {
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: rgba(0, 0, 0, 0.08) 0 0 0 1px;
+}
+.readmd-action.primary {
+  background: var(--readmd-fg);
+  color: var(--readmd-surface);
+  box-shadow: none;
+}
 
-/* ── highlight.js 作用域 ── */
+.readmd-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 20px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+.readmd-ln {
+  width: 1%;
+  min-width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  vertical-align: top;
+  color: var(--readmd-muted);
+  background: var(--readmd-surface-soft);
+  user-select: none;
+  white-space: nowrap;
+  border-right: 1px solid var(--readmd-border);
+}
+.readmd-lc {
+  padding: 0 16px 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--readmd-code);
+}
 
-.readmd-body pre code.hljs { display: block; overflow-x: auto; padding: 16px; }
-.readmd-body code.hljs { padding: 3px 5px; }
-.readmd-body .hljs { color: #24292e; background: #f6f8fa; }
+.readmd-body pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 16px;
+}
+.readmd-body code.hljs {
+  padding: 3px 5px;
+}
+.readmd-body .hljs {
+  color: var(--readmd-code);
+  background: var(--readmd-code-bg);
+}
 .readmd-body .hljs-doctag,
 .readmd-body .hljs-keyword,
 .readmd-body .hljs-meta .hljs-keyword,
@@ -208,152 +292,366 @@ const PANEL_CSS = `
 .readmd-body .hljs-quote,
 .readmd-body .hljs-selector-pseudo,
 .readmd-body .hljs-selector-tag { color: #22863a; }
-.readmd-body .hljs-subst { color: #24292e; }
+.readmd-body .hljs-subst { color: var(--readmd-code); }
 .readmd-body .hljs-section { color: #005cc5; font-weight: 700; }
 .readmd-body .hljs-bullet { color: #735c0f; }
-.readmd-body .hljs-emphasis { color: #24292e; font-style: italic; }
-.readmd-body .hljs-strong { color: #24292e; font-weight: 700; }
+.readmd-body .hljs-emphasis { color: var(--readmd-code); font-style: italic; }
+.readmd-body .hljs-strong { color: var(--readmd-code); font-weight: 700; }
 .readmd-body .hljs-addition { color: #22863a; background-color: #f0fff4; }
 .readmd-body .hljs-deletion { color: #b31d28; background-color: #ffeef0; }
 
-/* ── dark mode ── */
-
-@media (prefers-color-scheme: dark) {
-  .readmd-body .hljs { color: #c9d1d9; background: #161b22; }
-  .readmd-body .hljs-doctag,
-  .readmd-body .hljs-keyword,
-  .readmd-body .hljs-meta .hljs-keyword,
-  .readmd-body .hljs-template-tag,
-  .readmd-body .hljs-template-variable,
-  .readmd-body .hljs-type,
-  .readmd-body .hljs-variable.language_ { color: #ff7b72; }
-  .readmd-body .hljs-title,
-  .readmd-body .hljs-title.class_,
-  .readmd-body .hljs-title.class_.inherited__,
-  .readmd-body .hljs-title.function_ { color: #d2a8ff; }
-  .readmd-body .hljs-attr,
-  .readmd-body .hljs-attribute,
-  .readmd-body .hljs-literal,
-  .readmd-body .hljs-meta,
-  .readmd-body .hljs-number,
-  .readmd-body .hljs-operator,
-  .readmd-body .hljs-selector-attr,
-  .readmd-body .hljs-selector-class,
-  .readmd-body .hljs-selector-id,
-  .readmd-body .hljs-variable { color: #79c0ff; }
-  .readmd-body .hljs-meta .hljs-string,
-  .readmd-body .hljs-regexp,
-  .readmd-body .hljs-string { color: #a5d6ff; }
-  .readmd-body .hljs-built_in,
-  .readmd-body .hljs-symbol { color: #ffa657; }
-  .readmd-body .hljs-code,
-  .readmd-body .hljs-comment,
-  .readmd-body .hljs-formula { color: #8b949e; }
-  .readmd-body .hljs-name,
-  .readmd-body .hljs-quote,
-  .readmd-body .hljs-selector-pseudo,
-  .readmd-body .hljs-selector-tag { color: #7ee787; }
-  .readmd-body .hljs-subst { color: #c9d1d9; }
-  .readmd-body .hljs-section { color: #1f6feb; font-weight: 700; }
-  .readmd-body .hljs-bullet { color: #f2cc60; }
-  .readmd-body .hljs-emphasis { color: #c9d1d9; font-style: italic; }
-  .readmd-body .hljs-strong { color: #c9d1d9; font-weight: 700; }
-  .readmd-body .hljs-addition { color: #aff5b4; background-color: #033a16; }
-  .readmd-body .hljs-deletion { color: #ffdcd7; background-color: #67060c; }
-}
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-doctag,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-keyword,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-meta .hljs-keyword,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-template-tag,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-template-variable,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-type,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-variable.language_ { color: #ff7b72; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-title,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-title.class_,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-title.class_.inherited__,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-title.function_ { color: #d2a8ff; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-attr,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-attribute,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-literal,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-meta,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-number,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-operator,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-selector-attr,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-selector-class,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-selector-id,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-variable { color: #79c0ff; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-meta .hljs-string,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-regexp,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-string { color: #a5d6ff; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-built_in,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-symbol { color: #ffa657; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-code,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-comment,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-formula { color: #8b949e; }
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-name,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-quote,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-selector-pseudo,
+#readmd-panel[data-theme="dark"] .readmd-body .hljs-selector-tag { color: #7ee787; }
 `;
 
-const CLOSE_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>';
+const CLOSE_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>';
 
 class ReadmdPanel {
   constructor() {
     this.el = null;
     this.bodyEl = null;
-    this.markdown = '';
-    this.isOpen = false;
-    this.mode = 'preview';
-    this._onClose = null;
-    this._width = window.innerWidth * 0.5;
-    this._renderToken = 0;
+    this.footerEl = null;
+    this.fileInfoEl = null;
+    this.actions = {};
+    this.state = null;
+    this._boundDelegatedClick = this._handleDelegatedClick.bind(this);
+    this._boundKeydown = this._handleKeydown.bind(this);
   }
 
-  create(flexRowContainer, onClose) {
-    if (this.el) return;
-    this._onClose = onClose;
-
+  create(container) {
     if (!document.getElementById('readmd-style')) {
-      const s = document.createElement('style');
-      s.id = 'readmd-style';
-      s.textContent = PANEL_CSS;
-      document.head.appendChild(s);
+      const style = document.createElement('style');
+      style.id = 'readmd-style';
+      style.textContent = PANEL_CSS;
+      document.head.appendChild(style);
     }
 
-    this.el = document.createElement('div');
-    this.el.id = 'readmd-panel';
-    this.el.style.position = 'relative';
-    this.el.setAttribute('role', 'complementary');
-    this.el.setAttribute('aria-label', '中文翻译');
-
-    // ── 同步 GitHub 主题 ──
-    const colorMode = document.documentElement.getAttribute('data-color-mode');
-    const darkTheme = document.documentElement.getAttribute('data-dark-theme');
-    const lightTheme = document.documentElement.getAttribute('data-light-theme');
-    const isDark = colorMode === 'dark' || (colorMode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    this.el.setAttribute('data-theme', isDark ? 'dark' : 'light');
-
-    this.el.innerHTML = `
-      <div class="readmd-resize"></div>
-      <div class="readmd-toolbar">
-        <div class="readmd-toolbar-left">
-          <ul class="readmd-seg">
-            <li><button class="readmd-seg-btn" aria-current="true" data-mode="preview">预览</button></li>
-            <li><button class="readmd-seg-btn" aria-current="false" data-mode="source">源码</button></li>
-          </ul>
-          <span class="readmd-fileinfo"></span>
+    if (!this.el) {
+      this.el = document.createElement('aside');
+      this.el.id = 'readmd-panel';
+      this.el.setAttribute('role', 'complementary');
+      this.el.setAttribute('aria-label', '中文翻译');
+      this.el.setAttribute('tabindex', '-1');
+      this.el.innerHTML = `
+        <div class="readmd-resize" data-readmd-action="resize"></div>
+        <div class="readmd-toolbar">
+          <div class="readmd-toolbar-left">
+            <ul class="readmd-seg" aria-label="显示模式">
+              <li><button class="readmd-seg-btn" data-readmd-action="mode" data-mode="preview">预览</button></li>
+              <li><button class="readmd-seg-btn" data-readmd-action="mode" data-mode="source">源码</button></li>
+            </ul>
+            <span class="readmd-fileinfo"></span>
+          </div>
+          <div class="readmd-toolbar-right">
+            <button class="readmd-close" data-readmd-action="close" aria-label="关闭">${CLOSE_SVG}</button>
+          </div>
         </div>
-        <div class="readmd-toolbar-right">
-          <button class="readmd-close" aria-label="关闭">${CLOSE_SVG}</button>
+        <div class="readmd-content">
+          <div class="readmd-body markdown-body"></div>
+          <div class="readmd-footer" data-visible="false"></div>
         </div>
-      </div>
-      <div class="readmd-body markdown-body"></div>`;
+      `;
 
-    flexRowContainer.appendChild(this.el);
-    this.bodyEl = this.el.querySelector('.readmd-body');
-    this.el.querySelector('.readmd-close').addEventListener('click', () => this.close());
+      this.bodyEl = this.el.querySelector('.readmd-body');
+      this.footerEl = this.el.querySelector('.readmd-footer');
+      this.fileInfoEl = this.el.querySelector('.readmd-fileinfo');
 
-    this.el.querySelectorAll('.readmd-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => this._switchMode(btn.dataset.mode));
-    });
+      this.el.addEventListener('click', this._boundDelegatedClick);
+      this.el.addEventListener('keydown', this._boundKeydown);
+      this._setupResize();
+    }
 
-    this._setupResize();
-    this.isOpen = true;
+    if (this.el.parentElement !== container) {
+      container.appendChild(this.el);
+    }
+
+    this._syncTheme();
+    queueMicrotask(() => this.el?.focus());
+    return this;
   }
 
-  // ── 拖拽调整宽度 ──
+  bindActions(actions) {
+    this.actions = actions || {};
+    return this;
+  }
+
+  render(state) {
+    if (!this.el || !this.bodyEl || !this.footerEl) {
+      return;
+    }
+
+    this.state = state;
+    this._syncTheme();
+    this.el.style.setProperty('--readmd-width', `${Math.round(state.width || 420)}px`);
+    this._syncToolbar(state);
+
+    if (state.error) {
+      this._renderError(state.error);
+      this._renderFooter('');
+      return;
+    }
+
+    if (!state.markdown) {
+      if (state.phase === 'loading') {
+        this._renderSkeleton();
+      } else {
+        this._renderEmpty('准备翻译', '点击“中”开始翻译当前 Markdown。');
+      }
+      this._renderFooter('');
+      return;
+    }
+
+    if (state.mode === 'source') {
+      this._renderSource(state.markdown);
+    } else {
+      this._renderPreview(state.markdown, state.previewHtml);
+    }
+
+    if (state.phase === 'loading' || state.phase === 'partial') {
+      this._renderFooter('翻译中...');
+    } else if (state.previewPending && state.mode === 'preview') {
+      this._renderFooter('排版优化中...');
+    } else {
+      this._renderFooter('');
+    }
+  }
+
+  destroy() {
+    if (!this.el) {
+      return;
+    }
+    this.el.removeEventListener('click', this._boundDelegatedClick);
+    this.el.removeEventListener('keydown', this._boundKeydown);
+    this.el.remove();
+    this.el = null;
+    this.bodyEl = null;
+    this.footerEl = null;
+    this.fileInfoEl = null;
+    this.state = null;
+  }
+
+  _syncTheme() {
+    if (!this.el) {
+      return;
+    }
+    const colorMode = document.documentElement.getAttribute('data-color-mode');
+    const isDark = colorMode === 'dark'
+      || (colorMode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    this.el.setAttribute('data-theme', isDark ? 'dark' : 'light');
+  }
+
+  _syncToolbar(state) {
+    this.el.querySelectorAll('.readmd-seg-btn').forEach((button) => {
+      button.setAttribute('aria-current', button.dataset.mode === state.mode ? 'true' : 'false');
+    });
+    this.fileInfoEl.textContent = this._formatFileInfo(state.markdown);
+  }
+
+  _renderSkeleton() {
+    this.bodyEl.className = 'readmd-body';
+    this.bodyEl.innerHTML = `
+      <div class="readmd-skeleton" aria-hidden="true">
+        <div class="readmd-skeleton-line"></div>
+        <div class="readmd-skeleton-line"></div>
+        <div class="readmd-skeleton-line"></div>
+      </div>
+    `;
+  }
+
+  _renderEmpty(title, text) {
+    this.bodyEl.className = 'readmd-body';
+    this.bodyEl.innerHTML = `
+      <div class="readmd-state">
+        <div class="readmd-state-title">${this._escapeHtml(title)}</div>
+        <div class="readmd-state-text">${this._escapeHtml(text)}</div>
+      </div>
+    `;
+  }
+
+  _renderError(error) {
+    const retryButton = error.retryable
+      ? '<button class="readmd-action primary" data-readmd-action="retry">重试</button>'
+      : '';
+    const optionsButton = error.openOptions
+      ? '<button class="readmd-action" data-readmd-action="open-options">前往设置</button>'
+      : '';
+
+    this.bodyEl.className = 'readmd-body';
+    this.bodyEl.innerHTML = `
+      <div class="readmd-state">
+        <div class="readmd-state-title">${this._escapeHtml(error.title || '翻译失败')}</div>
+        <div class="readmd-state-text">${this._escapeHtml(error.message || '请稍后再试。')}</div>
+        <div class="readmd-state-actions">${retryButton}${optionsButton}</div>
+      </div>
+    `;
+  }
+
+  _renderPreview(markdown, previewHtml) {
+    this.bodyEl.className = 'readmd-body markdown-body';
+    if (previewHtml) {
+      this.bodyEl.innerHTML = previewHtml;
+    } else if (typeof marked !== 'undefined') {
+      this.bodyEl.innerHTML = marked.parse(markdown, { renderer: this._renderer() });
+    } else {
+      this.bodyEl.innerHTML = `<pre>${this._escapeHtml(markdown)}</pre>`;
+    }
+    this._highlightAll();
+  }
+
+  _renderSource(markdown) {
+    const lines = markdown.split('\n');
+    const highlighted = this._highlightMarkdown(markdown).split('\n');
+    const rows = lines
+      .map((line, index) => {
+        const html = highlighted[index] ?? this._escapeHtml(line);
+        return `<tr>
+          <td class="readmd-ln">${index + 1}</td>
+          <td class="readmd-lc">${html || '&nbsp;'}</td>
+        </tr>`;
+      })
+      .join('');
+
+    this.bodyEl.className = 'readmd-body readmd-source';
+    this.bodyEl.innerHTML = `<table class="readmd-lines"><tbody>${rows}</tbody></table>`;
+  }
+
+  _renderFooter(text) {
+    this.footerEl.textContent = text || '';
+    this.footerEl.dataset.visible = text ? 'true' : 'false';
+  }
+
+  _renderer() {
+    const renderer = new marked.Renderer();
+    renderer.code = ({ text, lang }) => {
+      if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+        const highlighted = hljs.highlight(text, { language: lang }).value;
+        return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+      }
+      return `<pre><code>${this._escapeHtml(text)}</code></pre>`;
+    };
+    return renderer;
+  }
+
+  _highlightAll() {
+    if (typeof hljs === 'undefined') {
+      return;
+    }
+    this.bodyEl.querySelectorAll('pre code:not(.hljs)').forEach((element) => {
+      hljs.highlightElement(element);
+    });
+  }
+
+  _highlightMarkdown(markdown) {
+    if (typeof hljs === 'undefined' || !hljs.getLanguage('markdown')) {
+      return this._escapeHtml(markdown);
+    }
+    try {
+      return hljs.highlight(markdown, { language: 'markdown' }).value;
+    } catch {
+      return this._escapeHtml(markdown);
+    }
+  }
+
+  _formatFileInfo(markdown) {
+    if (!markdown) {
+      return '';
+    }
+    const lines = markdown.split('\n');
+    const loc = lines.filter((line) => line.trim()).length;
+    const bytes = new Blob([markdown]).size;
+    const size = bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+    return `${lines.length} 行 (${loc} loc) · ${size}`;
+  }
+
+  _handleDelegatedClick(event) {
+    const target = event.target.closest('[data-readmd-action]');
+    if (!target) {
+      return;
+    }
+
+    const action = target.dataset.readmdAction;
+    if (action === 'mode') {
+      this.actions.onModeChange?.(target.dataset.mode);
+      return;
+    }
+    if (action === 'close') {
+      this.actions.onClose?.();
+      return;
+    }
+    if (action === 'retry') {
+      this.actions.onRetry?.();
+      return;
+    }
+    if (action === 'open-options') {
+      this.actions.onOpenOptions?.();
+    }
+  }
+
+  _handleKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.actions.onClose?.();
+    }
+  }
 
   _setupResize() {
     const handle = this.el.querySelector('.readmd-resize');
-    let startX, startW;
+    let startX = 0;
+    let startWidth = 0;
 
-    const onMove = (e) => {
-      const dx = startX - e.clientX;
-      const w = Math.max(280, Math.min(window.innerWidth * 0.6, startW + dx));
-      this._width = w;
-      this.el.style.setProperty('--readmd-width', w + 'px');
+    const onMove = (event) => {
+      const delta = startX - event.clientX;
+      const width = Math.max(320, Math.min(window.innerWidth * 0.7, startWidth + delta));
+      this.el.style.setProperty('--readmd-width', `${Math.round(width)}px`);
+      this.actions.onResize?.(width, false);
     };
 
-    const onUp = () => {
+    const onUp = (event) => {
+      const delta = startX - event.clientX;
+      const width = Math.max(320, Math.min(window.innerWidth * 0.7, startWidth + delta));
       handle.classList.remove('active');
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      this.actions.onResize?.(width, true);
     };
 
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      startX = e.clientX;
-      startW = this._width;
+    handle.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      startX = event.clientX;
+      startWidth = this.state?.width || this.el.getBoundingClientRect().width;
       handle.classList.add('active');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
@@ -362,136 +660,12 @@ class ReadmdPanel {
     });
   }
 
-  // ── 模式切换 ──
-
-  _switchMode(mode) {
-    if (mode === this.mode) return;
-    this.mode = mode;
-    this.el.querySelectorAll('.readmd-seg-btn').forEach(btn => {
-      btn.setAttribute('aria-current', btn.dataset.mode === mode ? 'true' : 'false');
-    });
-    this._render(false);
+  _escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
-
-  // ── 渲染 ──
-
-  _render(done) {
-    if (!this.markdown) return;
-    const token = ++this._renderToken;
-    if (this.mode === 'preview') {
-      this.bodyEl.className = 'readmd-body markdown-body';
-      this.bodyEl.innerHTML = this._renderLocalMarkdown();
-      this._highlightAll();
-      if (done) this._renderGitHubMarkdown(token);
-    } else {
-      this.bodyEl.className = 'readmd-body readmd-source';
-      const table = document.createElement('table');
-      table.className = 'readmd-lines';
-      const lines = this.markdown.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const tr = document.createElement('tr');
-        const tdNum = document.createElement('td');
-        tdNum.className = 'readmd-ln';
-        tdNum.textContent = i + 1;
-        const tdCode = document.createElement('td');
-        tdCode.className = 'readmd-lc';
-        tdCode.textContent = lines[i];
-        tr.appendChild(tdNum);
-        tr.appendChild(tdCode);
-        table.appendChild(tr);
-      }
-      this.bodyEl.innerHTML = '';
-      this.bodyEl.appendChild(table);
-    }
-    this._updateFileInfo();
-  }
-
-  _renderLocalMarkdown() {
-    return typeof marked !== 'undefined'
-      ? marked.parse(this.markdown, { renderer: this._renderer() })
-      : this._esc(this.markdown);
-  }
-
-  _renderGitHubMarkdown(token) {
-    if (!chrome?.runtime?.sendMessage) return;
-    chrome.runtime.sendMessage({
-      type: 'github-markdown',
-      markdown: this.markdown,
-      context: this._githubContext()
-    }, (res) => {
-      if (token !== this._renderToken || this.mode !== 'preview' || !this.bodyEl) return;
-      if (chrome.runtime.lastError || !res?.ok || !res.html) return;
-      this.bodyEl.innerHTML = res.html;
-      this._highlightAll();
-      this._updateFileInfo();
-    });
-  }
-
-  _githubContext() {
-    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\//);
-    return m ? `${m[1]}/${m[2]}` : '';
-  }
-
-  _renderer() {
-    const r = new marked.Renderer();
-    r.code = ({ text, lang }) => {
-      if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
-        const highlighted = hljs.highlight(text, { language: lang }).value;
-        return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-      }
-      return `<pre><code>${this._esc(text)}</code></pre>`;
-    };
-    return r;
-  }
-
-  _highlightAll() {
-    if (typeof hljs === 'undefined') return;
-    this.bodyEl.querySelectorAll('pre code:not(.hljs)').forEach(el => {
-      hljs.highlightElement(el);
-    });
-  }
-
-  _updateFileInfo() {
-    const info = this.el.querySelector('.readmd-fileinfo');
-    if (!info || !this.markdown) return;
-    const lines = this.markdown.split('\n');
-    const loc = lines.filter(l => l.trim()).length;
-    const bytes = new Blob([this.markdown]).size;
-    const size = bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
-    info.textContent = `${lines.length} 行 (${loc} loc) · ${size}`;
-  }
-
-  // ── 生命周期 ──
-
-  close() {
-    if (!this.el) return;
-    this.el.remove();
-    document.getElementById('readmd-style')?.remove();
-    this.el = null; this.bodyEl = null; this.isOpen = false;
-    this._onClose?.();
-  }
-
-  destroy() { if (this.isOpen) this.close(); }
-
-  showSkeleton() {
-    if (!this.bodyEl) return;
-    this.bodyEl.innerHTML = `<div class="readmd-skeleton">
-      <div class="readmd-skeleton-line"></div><div class="readmd-skeleton-line"></div><div class="readmd-skeleton-line"></div>
-    </div>`;
-  }
-
-  showStatus(html) {
-    if (!this.bodyEl) return;
-    this.bodyEl.innerHTML = `<div class="readmd-status">${html}</div>`;
-  }
-
-  update(markdown, done) {
-    this.markdown = markdown;
-    this._render(done);
-    if (!done) this.bodyEl.insertAdjacentHTML('beforeend', '<div class="readmd-translating">翻译中...</div>');
-  }
-
-  _esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 }
 
 window.ReadmdPanel = ReadmdPanel;
