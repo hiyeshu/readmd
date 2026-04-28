@@ -1,5 +1,5 @@
 /**
- * [INPUT]: marked.js (window.marked), highlight.js (window.hljs)
+ * [INPUT]: marked.js (window.marked), highlight.js (window.hljs), GitHub Markdown API via background.js
  * [OUTPUT]: ReadmdPanel — create/destroy/update，GitHub 原生风格翻译面板
  * [POS]: 翻译管线的渲染层，被 content.js 消费
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -274,6 +274,7 @@ class ReadmdPanel {
     this.mode = 'preview';
     this._onClose = null;
     this._width = window.innerWidth * 0.5;
+    this._renderToken = 0;
   }
 
   create(flexRowContainer, onClose) {
@@ -369,17 +370,19 @@ class ReadmdPanel {
     this.el.querySelectorAll('.readmd-seg-btn').forEach(btn => {
       btn.setAttribute('aria-current', btn.dataset.mode === mode ? 'true' : 'false');
     });
-    this._render();
+    this._render(false);
   }
 
   // ── 渲染 ──
 
-  _render() {
+  _render(done) {
     if (!this.markdown) return;
+    const token = ++this._renderToken;
     if (this.mode === 'preview') {
       this.bodyEl.className = 'readmd-body markdown-body';
-      this.bodyEl.innerHTML = typeof marked !== 'undefined' ? marked.parse(this.markdown, { renderer: this._renderer() }) : this._esc(this.markdown);
+      this.bodyEl.innerHTML = this._renderLocalMarkdown();
       this._highlightAll();
+      if (done) this._renderGitHubMarkdown(token);
     } else {
       this.bodyEl.className = 'readmd-body readmd-source';
       const table = document.createElement('table');
@@ -401,6 +404,32 @@ class ReadmdPanel {
       this.bodyEl.appendChild(table);
     }
     this._updateFileInfo();
+  }
+
+  _renderLocalMarkdown() {
+    return typeof marked !== 'undefined'
+      ? marked.parse(this.markdown, { renderer: this._renderer() })
+      : this._esc(this.markdown);
+  }
+
+  _renderGitHubMarkdown(token) {
+    if (!chrome?.runtime?.sendMessage) return;
+    chrome.runtime.sendMessage({
+      type: 'github-markdown',
+      markdown: this.markdown,
+      context: this._githubContext()
+    }, (res) => {
+      if (token !== this._renderToken || this.mode !== 'preview' || !this.bodyEl) return;
+      if (chrome.runtime.lastError || !res?.ok || !res.html) return;
+      this.bodyEl.innerHTML = res.html;
+      this._highlightAll();
+      this._updateFileInfo();
+    });
+  }
+
+  _githubContext() {
+    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\//);
+    return m ? `${m[1]}/${m[2]}` : '';
   }
 
   _renderer() {
@@ -458,7 +487,7 @@ class ReadmdPanel {
 
   update(markdown, done) {
     this.markdown = markdown;
-    this._render();
+    this._render(done);
     if (!done) this.bodyEl.insertAdjacentHTML('beforeend', '<div class="readmd-translating">翻译中...</div>');
   }
 

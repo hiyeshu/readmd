@@ -7,7 +7,7 @@
 
 | 元素 | 设计 |
 |------|------|
-| 触发 | 文件预览页顶部工具栏"中"按钮；快捷键 Ctrl/Cmd+Shift+T |
+| 触发 | 文件预览页顶部工具栏"中"按钮；快捷键 Ctrl/Cmd+Shift+Y |
 | 面板 | 主内容区右侧，可拖拽调宽度（300px–60%），记忆偏好 |
 | 内容 | 中文 Markdown 渲染（预览模式）或 Markdown 源码（源码模式） |
 | 同步 | 左侧切"预览/源码"时，右侧自动同步 |
@@ -89,7 +89,7 @@ api已有参考：，/Users/yeshu/Desktop/yeshu/md-translator-zh
 ### "中"触发按钮
 - 位置：GitHub 文件工具栏（Raw/Blame/Edit 同行）末尾
 - 样式：复用 GitHub 原生按钮样式，文字"中"
-- 快捷键：Ctrl/Cmd+Shift+T
+- 快捷键：Ctrl/Cmd+Shift+Y
 - 窗口 < 768px 时隐藏（全屏覆盖模式通过快捷键触发）
 
 ### 翻译面板

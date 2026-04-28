@@ -1,6 +1,6 @@
 /**
  * [INPUT]: ReadmdPanel, ReadmdTranslator
- * [OUTPUT]: 自执行 — 注入按钮、嵌入面板到 GitHub flex-row 布局
+ * [OUTPUT]: 自执行 — 注入按钮、监听 Ctrl/Command+Shift+Y、嵌入面板到 GitHub flex-row 布局
  * [POS]: 扩展入口，胶水层，协调 panel 和 translator
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -64,7 +64,7 @@
     btn.id = 'readmd-btn';
     btn.textContent = '中';
     btn.className = 'btn btn-sm tooltipped tooltipped-n';
-    btn.setAttribute('aria-label', '翻译为中文 (Alt+T)');
+    btn.setAttribute('aria-label', '翻译为中文 (Ctrl/Command+Shift+Y)');
     btn.style.marginLeft = '8px';
     btn.addEventListener('click', toggle);
     toolbar.appendChild(btn);
@@ -97,14 +97,14 @@
     } finally { translating = false; }
   }
 
-  // ── 快捷键 Alt+T（chrome.commands 消息 + keydown fallback）──
+  // ── 快捷键 Ctrl/Command+Shift+Y（chrome.commands 消息 + keydown fallback）──
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'toggle-translate' && isFilePage()) toggle();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyT') {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.code === 'KeyY') {
       e.preventDefault();
       e.stopPropagation();
       if (isFilePage()) toggle();

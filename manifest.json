@@ -6,6 +6,7 @@
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
     "https://github.com/*",
+    "https://api.github.com/*",
     "https://raw.githubusercontent.com/*",
     "https://translate.googleapis.com/*",
     "https://api.mymemory.translated.net/*",
@@ -22,7 +23,7 @@
   }],
   "commands": {
     "toggle-translate": {
-      "suggested_key": { "default": "Alt+T", "mac": "Alt+T" },
+      "suggested_key": { "default": "Ctrl+Shift+Y", "mac": "Command+Shift+Y" },
       "description": "翻译为中文"
     }
   },

@@ -1,6 +1,6 @@
 # Readmd 待解决问题
 
-## 1. Alt+T 快捷键在 macOS 上无效
+## 1. Alt+T 快捷键在 macOS 上无效（已改为 Ctrl/Command+Shift+Y）
 
 **现象**: 按 Option+T 无法触发翻译面板开关
 
@@ -15,11 +15,10 @@
 - `chrome://extensions/shortcuts` 页面需要手动确认/设置快捷键
 - macOS Option+T 产生特殊字符 `†`，可能影响事件传播
 
-**待验证**:
-- [ ] 在 `chrome://extensions/shortcuts` 确认快捷键是否注册为 `⌥T`
-- [ ] 尝试换一个快捷键组合（如 `Alt+Shift+T` 或 `Ctrl+Shift+T`）
-- [ ] 在 background.js 的 `onCommand` 加 `console.log` 确认命令是否触发
-- [ ] 检查是否有其他扩展占用了 Alt+T
+**处理**:
+- 已把 manifest 快捷键改为 `Ctrl+Shift+Y` / macOS `Command+Shift+Y`
+- 已把页面 fallback 监听同步改为 `Ctrl/Command+Shift+Y`
+- 重新加载扩展后，仍建议在 `chrome://extensions/shortcuts` 确认没有被浏览器或其他扩展占用
 
 ## 2. 源码模式没有语法高亮
 

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: chrome.runtime 消息
- * [OUTPUT]: 配置代理、LLM fetch 代理、火山翻译代理、Options 页打开
+ * [OUTPUT]: 配置代理、LLM fetch 代理、GitHub Markdown 渲染代理、火山翻译代理、Options 页打开
  * [POS]: MV3 Service Worker，消息路由 + 网络代理
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -37,6 +37,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     doFetch(msg.url, msg.options).then(sendResponse);
     return true;
   }
+  if (msg.type === 'github-markdown') {
+    renderGitHubMarkdown(msg.markdown, msg.context).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'volcengine-translate') {
     handleVolcengineTranslate(msg.texts, msg.config).then(sendResponse);
     return true;
@@ -53,6 +57,32 @@ async function doFetch(url, options) {
     return { ok: res.ok, status: res.status, text };
   } catch (e) {
     return { ok: false, status: 0, text: '', error: e.message };
+  }
+}
+
+// ── GitHub Markdown 渲染代理 ──
+
+async function renderGitHubMarkdown(markdown, context) {
+  try {
+    const body = {
+      text: markdown || '',
+      mode: 'gfm'
+    };
+    if (context) body.context = context;
+
+    const res = await fetch('https://api.github.com/markdown', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    if (!res.ok) return { ok: false, status: res.status, error: text };
+    return { ok: true, html: text };
+  } catch (e) {
+    return { ok: false, status: 0, error: e.message };
   }
 }
 
